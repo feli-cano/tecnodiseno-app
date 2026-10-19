@@ -7,26 +7,25 @@ let canvasTexts = [];
 let generatedQRImage = null;
 
 let selectedItem = null;
-let interactionMode = null;
 let startX = 0, startY = 0;
 let initialScale = 1;
-let initialSize = 20;
 let isInteracting = false;
-let initialDistFromCenter = 0;
+let initialPinchDistance = null;
 
 function initCanvas() {
     canvas = document.getElementById('productCanvas');
     if (!canvas) return;
     ctx = canvas.getContext('2d');
     
-    // Eventos del mouse y táctiles para manipulación fluida de elementos
+    // Eventos del mouse
     canvas.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
 
+    // Eventos táctiles para dispositivos móviles
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-    window.addEventListener('touchmove', handleTouchMove, { passive: false });
-    window.addEventListener('touchend', handleTouchUp);
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
 
     redrawCanvas();
 }
@@ -138,6 +137,16 @@ function updateSelectedTextColor() {
     }
 }
 
+function zoomInImage() {
+    imgScale = Math.min(5, imgScale * 1.15);
+    redrawCanvas();
+}
+
+function zoomOutImage() {
+    imgScale = Math.max(0.05, imgScale / 1.15);
+    redrawCanvas();
+}
+
 function rotateImage() {
     imgRotation += 90;
     if(imgRotation >= 360) imgRotation = 0;
@@ -168,7 +177,6 @@ function generateLiveQR() {
         return;
     }
 
-    // Usar librería qrcode.js en contenedor oculto para renderizar
     const tempDiv = document.createElement('div');
     new QRCode(tempDiv, {
         text: val,
@@ -196,16 +204,13 @@ function redrawCanvas() {
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Fondo base elegante del canvas
     ctx.fillStyle = '#111115';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Marco decorativo interior
     ctx.strokeStyle = 'rgba(212, 175, 55, 0.2)';
     ctx.lineWidth = 2;
     ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
 
-    // Dibujar imagen principal cargada
     if (uploadedImage) {
         ctx.save();
         ctx.translate(imgX, imgY);
@@ -215,21 +220,18 @@ function redrawCanvas() {
         ctx.drawImage(uploadedImage, -uploadedImage.width / 2, -uploadedImage.height / 2);
         ctx.restore();
     } else {
-        // Placeholder visual
         ctx.fillStyle = 'rgba(212, 175, 55, 0.15)';
         ctx.font = '12px Montserrat, sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText('Sube tu foto o diseño aquí', canvas.width / 2, canvas.height / 2 - 10);
     }
 
-    // Dibujar código QR si existe
     if (generatedQRImage) {
         ctx.drawImage(generatedQRImage, canvas.width - 130, canvas.height - 140, 110, 110);
         ctx.strokeStyle = '#D4AF37';
         ctx.strokeRect(128, canvas.height - 142, 114, 114);
     }
 
-    // Dibujar textos personalizados
     canvasTexts.forEach(t => {
         ctx.save();
         ctx.font = `bold ${t.size}px '${t.font}', sans-serif`;
@@ -242,13 +244,11 @@ function redrawCanvas() {
     });
 }
 
-// Control de eventos de interacción (Arrastre y escalado básico)
 function handleMouseDown(e) {
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // Verificar selección de textos
     for (let i = canvasTexts.length - 1; i >= 0; i--) {
         const t = canvasTexts[i];
         if (Math.abs(mouseX - t.x) < 60 && Math.abs(mouseY - t.y) < 20) {
@@ -260,7 +260,6 @@ function handleMouseDown(e) {
         }
     }
 
-    // Si no es texto, interactuar con la imagen principal
     selectedItem = { type: 'image' };
     isInteracting = true;
     startX = mouseX;
@@ -282,10 +281,8 @@ function handleMouseMove(e) {
             canvasTexts[selectedItem.index].y += dy;
         } else if (selectedItem.type === 'image') {
             if (e.shiftKey) {
-                // Escalar con Shift + Movimiento
                 imgScale = Math.max(0.1, initialScale + (dx * 0.005));
             } else {
-                // Mover imagen
                 imgX += dx;
                 imgY += dy;
             }
@@ -301,22 +298,46 @@ function handleMouseUp() {
     selectedItem = null;
 }
 
-// Soportes táctiles para móviles
+// MANEJO TÁCTIL (MÓVIL)
+function getPinchDistance(touches) {
+    return Math.hypot(
+        touches[0].clientX - touches[1].clientX,
+        touches[0].clientY - touches[1].clientY
+    );
+}
+
 function handleTouchStart(e) {
+    e.preventDefault();
     if (e.touches.length === 1) {
         const touch = e.touches[0];
         handleMouseDown({ clientX: touch.clientX, clientY: touch.clientY, shiftKey: false });
+    } else if (e.touches.length === 2 && uploadedImage) {
+        initialPinchDistance = getPinchDistance(e.touches);
+        initialScale = imgScale;
     }
 }
+
 function handleTouchMove(e) {
+    e.preventDefault();
     if (e.touches.length === 1 && isInteracting) {
         const touch = e.touches[0];
         handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY, shiftKey: false });
-        e.preventDefault();
+    } else if (e.touches.length === 2 && initialPinchDistance && uploadedImage) {
+        const currentDistance = getPinchDistance(e.touches);
+        const factor = currentDistance / initialPinchDistance;
+        imgScale = Math.max(0.05, Math.min(5, initialScale * factor));
+        redrawCanvas();
     }
 }
-function handleTouchUp() {
-    handleMouseUp();
+
+function handleTouchEnd(e) {
+    e.preventDefault();
+    if (e.touches.length < 2) {
+        initialPinchDistance = null;
+    }
+    if (e.touches.length === 0) {
+        handleMouseUp();
+    }
 }
 
 function openReviewModal() {
