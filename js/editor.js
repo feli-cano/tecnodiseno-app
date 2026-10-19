@@ -6,13 +6,14 @@ let imgX = 0, imgY = 0, imgScale = 1, imgRotation = 0, isFlipped = false;
 let canvasTexts = [];
 let generatedQRImage = null;
 
-let selectedItem = null; // { type: 'image' | 'text', action: 'move' | 'scale', corner: 'tl'|'tr'|'bl'|'br' }
+let selectedItem = null; // { type: 'image' | 'text', action: 'move' | 'scale', corner?: string, index?: number }
 let startX = 0, startY = 0;
 let initialScale = 1;
+let initialTextSize = 24;
 let isInteracting = false;
 let initialPinchDistance = null;
-const handleRadius = 14; // Tamaño visual del tirador
-const hitBoxRadius = 28;  // Zona de toque fácil para dedos en celulares
+const handleRadius = 14; 
+const hitBoxRadius = 28;
 
 function initCanvas() {
     canvas = document.getElementById('productCanvas');
@@ -109,6 +110,7 @@ function addTextToCanvas() {
     const font = document.getElementById('fontSelect').value;
     const color = document.getElementById('textColorPicker').value;
 
+    const newIndex = canvasTexts.length;
     canvasTexts.push({
         text: textVal,
         x: canvas.width / 2,
@@ -118,6 +120,7 @@ function addTextToCanvas() {
         color: color
     });
 
+    selectedItem = { type: 'text', action: 'move', index: newIndex };
     input.value = '';
     redrawCanvas();
 }
@@ -165,6 +168,7 @@ function resetCanvasElements() {
     isFlipped = false;
     imgX = canvas.width / 2;
     imgY = canvas.height / 2;
+    selectedItem = null;
     redrawCanvas();
 }
 
@@ -199,7 +203,33 @@ function generateLiveQR() {
     }, 100);
 }
 
-// Obtener las coordenadas exactas de las 4 esquinas de la imagen
+// Obtener dimensiones y posición del cuadro delimitador de un texto
+function getTextBounds(t) {
+    ctx.save();
+    ctx.font = `bold ${t.size}px '${t.font}', sans-serif`;
+    const metrics = ctx.measureText(t.text);
+    const textWidth = metrics.width;
+    const textHeight = t.size; 
+    ctx.restore();
+
+    const padding = 8;
+    const left = t.x - textWidth / 2 - padding;
+    const top = t.y - textHeight + (padding / 2);
+    const width = textWidth + (padding * 2);
+    const height = textHeight + (padding * 2);
+
+    return {
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height,
+        handle: { x: left + width, y: top + height }
+    };
+}
+
+// Obtener las coordenadas de las 4 esquinas de la imagen
 function getImageCorners() {
     if (!uploadedImage) return null;
     const w = (uploadedImage.width * imgScale) / 2;
@@ -235,37 +265,35 @@ function redrawCanvas() {
         ctx.drawImage(uploadedImage, -uploadedImage.width / 2, -uploadedImage.height / 2);
         ctx.restore();
 
-        // Marco estilo App de Diseño (Canva / Photoshop)
-        const corners = getImageCorners();
-        if (corners) {
-            ctx.save();
-            ctx.strokeStyle = '#D4AF37';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
-            ctx.strokeRect(corners.tl.x, corners.tl.y, corners.width, corners.height);
-            ctx.setLineDash([]);
-
-            // Tiradores táctiles en las 4 esquinas
-            const handleKeys = ['tl', 'tr', 'bl', 'br'];
-            handleKeys.forEach(key => {
-                const pt = corners[key];
-                
-                // Círculo exterior dorado
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, handleRadius, 0, 2 * Math.PI);
-                ctx.fillStyle = '#D4AF37';
-                ctx.fill();
-                ctx.strokeStyle = '#FFFFFF';
+        // Marco y tiradores de la imagen si está seleccionada
+        if (!selectedItem || selectedItem.type === 'image') {
+            const corners = getImageCorners();
+            if (corners) {
+                ctx.save();
+                ctx.strokeStyle = '#D4AF37';
                 ctx.lineWidth = 2;
-                ctx.stroke();
+                ctx.setLineDash([5, 5]);
+                ctx.strokeRect(corners.tl.x, corners.tl.y, corners.width, corners.height);
+                ctx.setLineDash([]);
 
-                // Punto centro interior
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 4, 0, 2 * Math.PI);
-                ctx.fillStyle = '#000000';
-                ctx.fill();
-            });
-            ctx.restore();
+                const handleKeys = ['tl', 'tr', 'bl', 'br'];
+                handleKeys.forEach(key => {
+                    const pt = corners[key];
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, handleRadius, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#D4AF37';
+                    ctx.fill();
+                    ctx.strokeStyle = '#FFFFFF';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.arc(pt.x, pt.y, 4, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#000000';
+                    ctx.fill();
+                });
+                ctx.restore();
+            }
         }
     } else {
         ctx.fillStyle = 'rgba(212, 175, 55, 0.15)';
@@ -280,7 +308,8 @@ function redrawCanvas() {
         ctx.strokeRect(128, canvas.height - 142, 114, 114);
     }
 
-    canvasTexts.forEach(t => {
+    // Dibujar textos y sus controles
+    canvasTexts.forEach((t, idx) => {
         ctx.save();
         ctx.font = `bold ${t.size}px '${t.font}', sans-serif`;
         ctx.fillStyle = t.color;
@@ -289,10 +318,35 @@ function redrawCanvas() {
         ctx.shadowBlur = 6;
         ctx.fillText(t.text, t.x, t.y);
         ctx.restore();
+
+        // Si el texto está seleccionado, dibujar su cuadro de transformación y tirador de esquina
+        if (selectedItem && selectedItem.type === 'text' && selectedItem.index === idx) {
+            const bounds = getTextBounds(t);
+            ctx.save();
+            ctx.strokeStyle = '#D4AF37';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(bounds.left, bounds.top, bounds.width, bounds.height);
+            ctx.setLineDash([]);
+
+            // Tirador circular en la esquina inferior derecha del texto
+            ctx.beginPath();
+            ctx.arc(bounds.handle.x, bounds.handle.y, handleRadius, 0, 2 * Math.PI);
+            ctx.fillStyle = '#D4AF37';
+            ctx.fill();
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(bounds.handle.x, bounds.handle.y, 4, 0, 2 * Math.PI);
+            ctx.fillStyle = '#000000';
+            ctx.fill();
+            ctx.restore();
+        }
     });
 }
 
-// Obtener la posición (X,Y) del punto presionado (unificando Mouse y Touch)
 function getPointerPos(e) {
     const rect = canvas.getBoundingClientRect();
     let clientX = e.clientX;
@@ -314,7 +368,38 @@ function handleMouseDown(e) {
     const mouseX = pos.x;
     const mouseY = pos.y;
 
-    // 1. Detectar si presionó alguna esquina para escalar
+    // 1. Verificar si presionó el tirador de escalado de un TEXTO seleccionado
+    if (selectedItem && selectedItem.type === 'text') {
+        const t = canvasTexts[selectedItem.index];
+        if (t) {
+            const bounds = getTextBounds(t);
+            const dist = Math.hypot(mouseX - bounds.handle.x, mouseY - bounds.handle.y);
+            if (dist <= hitBoxRadius) {
+                selectedItem.action = 'scale';
+                isInteracting = true;
+                startX = mouseX;
+                startY = mouseY;
+                initialTextSize = t.size;
+                return;
+            }
+        }
+    }
+
+    // 2. Verificar si presionó sobre cualquier TEXTO
+    for (let i = canvasTexts.length - 1; i >= 0; i--) {
+        const t = canvasTexts[i];
+        const bounds = getTextBounds(t);
+        if (mouseX >= bounds.left && mouseX <= bounds.right && mouseY >= bounds.top && mouseY <= bounds.bottom) {
+            selectedItem = { type: 'text', action: 'move', index: i };
+            isInteracting = true;
+            startX = mouseX;
+            startY = mouseY;
+            redrawCanvas();
+            return;
+        }
+    }
+
+    // 3. Verificar si presionó una esquina de la IMAGEN para escalar
     if (uploadedImage) {
         const corners = getImageCorners();
         const keys = ['tl', 'tr', 'bl', 'br'];
@@ -327,24 +412,13 @@ function handleMouseDown(e) {
                 startX = mouseX;
                 startY = mouseY;
                 initialScale = imgScale;
+                redrawCanvas();
                 return;
             }
         }
     }
 
-    // 2. Detectar si presionó un texto
-    for (let i = canvasTexts.length - 1; i >= 0; i--) {
-        const t = canvasTexts[i];
-        if (Math.abs(mouseX - t.x) < 60 && Math.abs(mouseY - t.y) < 20) {
-            selectedItem = { type: 'text', action: 'move', index: i };
-            isInteracting = true;
-            startX = mouseX;
-            startY = mouseY;
-            return;
-        }
-    }
-
-    // 3. Detectar si presionó sobre la imagen para moverla
+    // 4. Verificar si presionó la IMAGEN para moverla
     if (uploadedImage) {
         const corners = getImageCorners();
         if (mouseX >= corners.tl.x && mouseX <= corners.tr.x && mouseY >= corners.tl.y && mouseY <= corners.bl.y) {
@@ -353,9 +427,14 @@ function handleMouseDown(e) {
             startX = mouseX;
             startY = mouseY;
             initialScale = imgScale;
+            redrawCanvas();
             return;
         }
     }
+
+    // Si toca fuera de los elementos, deseleccionar
+    selectedItem = null;
+    redrawCanvas();
 }
 
 function handleMouseMove(e) {
@@ -363,37 +442,23 @@ function handleMouseMove(e) {
     const mouseX = pos.x;
     const mouseY = pos.y;
 
-    if (!isInteracting && uploadedImage) {
-        const corners = getImageCorners();
-        let hoverCorner = false;
-        if (corners) {
-            ['tl', 'tr', 'bl', 'br'].forEach(key => {
-                const pt = corners[key];
-                if (Math.hypot(mouseX - pt.x, mouseY - pt.y) <= hitBoxRadius) {
-                    canvas.style.cursor = (key === 'tl' || key === 'br') ? 'nwse-resize' : 'nesw-resize';
-                    hoverCorner = true;
-                }
-            });
-        }
-        if (!hoverCorner) {
-            if (mouseX >= corners.tl.x && mouseX <= corners.tr.x && mouseY >= corners.tl.y && mouseY <= corners.bl.y) {
-                canvas.style.cursor = 'move';
-            } else {
-                canvas.style.cursor = 'default';
-            }
-        }
-    }
-
     if (!isInteracting) return;
     const dx = mouseX - startX;
     const dy = mouseY - startY;
 
     if (selectedItem) {
         if (selectedItem.type === 'text') {
-            canvasTexts[selectedItem.index].x += dx;
-            canvasTexts[selectedItem.index].y += dy;
-            startX = mouseX;
-            startY = mouseY;
+            const t = canvasTexts[selectedItem.index];
+            if (selectedItem.action === 'move') {
+                t.x += dx;
+                t.y += dy;
+                startX = mouseX;
+                startY = mouseY;
+            } else if (selectedItem.action === 'scale') {
+                // Escalar tamaño de texto arrastrando la esquina
+                const distChange = dx + dy;
+                t.size = Math.max(10, Math.min(120, initialTextSize + distChange * 0.4));
+            }
         } else if (selectedItem.type === 'image') {
             if (selectedItem.action === 'move') {
                 imgX += dx;
@@ -415,11 +480,9 @@ function handleMouseMove(e) {
 
 function handleMouseUp() {
     isInteracting = false;
-    selectedItem = null;
     if (canvas) canvas.style.cursor = 'default';
 }
 
-// MANEJO DE EVENTOS TÁCTILES MÓVILES
 function getPinchDistance(touches) {
     return Math.hypot(
         touches[0].clientX - touches[1].clientX,
