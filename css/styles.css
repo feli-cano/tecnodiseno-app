@@ -3,7 +3,6 @@ body {
     cursor: default; 
 }
 
-/* Deshabilitar el desplazamiento/zoom predeterminado del navegador en el canvas */
 #productCanvas {
     touch-action: none;
     user-select: none;

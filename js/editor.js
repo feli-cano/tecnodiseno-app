@@ -6,11 +6,12 @@ let imgX = 0, imgY = 0, imgScale = 1, imgRotation = 0, isFlipped = false;
 let canvasTexts = [];
 let generatedQRImage = null;
 
-let selectedItem = null;
+let selectedItem = null; // { type: 'image' | 'text', action: 'move' | 'scale', corner: 'tl'|'tr'|'bl'|'br' }
 let startX = 0, startY = 0;
 let initialScale = 1;
 let isInteracting = false;
 let initialPinchDistance = null;
+const handleRadius = 12; // Radio aumentado para facilitar el toque táctil en móviles
 
 function initCanvas() {
     canvas = document.getElementById('productCanvas');
@@ -22,7 +23,7 @@ function initCanvas() {
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
 
-    // Eventos táctiles para dispositivos móviles
+    // Eventos táctiles para móviles
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
     canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
@@ -48,7 +49,6 @@ function openEditor(productId) {
     document.getElementById('editorTitle').innerText = currentProduct.title;
     document.getElementById('editorPrice').innerText = currentProduct.priceText;
 
-    // Mostrar u ocultar campos según la categoría
     const phoneGroup = document.getElementById('phoneSelectorGroup');
     const qrGroup = document.getElementById('qrFieldGroup');
     const petGroup = document.getElementById('petFieldsGroup');
@@ -57,7 +57,6 @@ function openEditor(productId) {
     qrGroup.classList.toggle('hidden', !currentProduct.title.toLowerCase().includes('qr') && currentProduct.category !== 'accesorios');
     petGroup.classList.toggle('hidden', !currentProduct.title.toLowerCase().includes('mascota') && !currentProduct.title.toLowerCase().includes('perro'));
 
-    // Resetear estados del canvas
     uploadedImage = null;
     canvasTexts = [];
     imgScale = 1;
@@ -90,7 +89,6 @@ function handleImageUpload(e) {
         const img = new Image();
         img.onload = function() {
             uploadedImage = img;
-            // Ajustar escala inicial proporcional
             imgScale = Math.min((canvas.width * 0.7) / img.width, (canvas.height * 0.7) / img.height);
             imgX = canvas.width / 2;
             imgY = canvas.height / 2;
@@ -125,14 +123,14 @@ function addTextToCanvas() {
 
 function updateSelectedTextFont() {
     if(selectedItem && selectedItem.type === 'text') {
-        selectedItem.font = document.getElementById('fontSelect').value;
+        canvasTexts[selectedItem.index].font = document.getElementById('fontSelect').value;
         redrawCanvas();
     }
 }
 
 function updateSelectedTextColor() {
     if(selectedItem && selectedItem.type === 'text') {
-        selectedItem.color = document.getElementById('textColorPicker').value;
+        canvasTexts[selectedItem.index].color = document.getElementById('textColorPicker').value;
         redrawCanvas();
     }
 }
@@ -200,6 +198,21 @@ function generateLiveQR() {
     }, 100);
 }
 
+// Obtener las coordenadas de las 4 esquinas de la imagen ajustada
+function getImageCorners() {
+    if (!uploadedImage) return null;
+    const w = (uploadedImage.width * imgScale) / 2;
+    const h = (uploadedImage.height * imgScale) / 2;
+    return {
+        tl: { x: imgX - w, y: imgY - h },
+        tr: { x: imgX + w, y: imgY - h },
+        bl: { x: imgX - w, y: imgY + h },
+        br: { x: imgX + w, y: imgY + h },
+        width: w * 2,
+        height: h * 2
+    };
+}
+
 function redrawCanvas() {
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -219,6 +232,31 @@ function redrawCanvas() {
         ctx.scale(imgScale, imgScale);
         ctx.drawImage(uploadedImage, -uploadedImage.width / 2, -uploadedImage.height / 2);
         ctx.restore();
+
+        // Dibujar marco delimitador y tiradores circulares para el escalado en esquinas
+        const corners = getImageCorners();
+        if (corners) {
+            ctx.save();
+            ctx.strokeStyle = '#D4AF37';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(corners.tl.x, corners.tl.y, corners.width, corners.height);
+            ctx.setLineDash([]);
+
+            // Dibujar los 4 círculos en las esquinas
+            const handleKeys = ['tl', 'tr', 'bl', 'br'];
+            handleKeys.forEach(key => {
+                const pt = corners[key];
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, handleRadius, 0, 2 * Math.PI);
+                ctx.fillStyle = '#D4AF37';
+                ctx.fill();
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            });
+            ctx.restore();
+        }
     } else {
         ctx.fillStyle = 'rgba(212, 175, 55, 0.15)';
         ctx.font = '12px Montserrat, sans-serif';
@@ -249,10 +287,29 @@ function handleMouseDown(e) {
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
+    // 1. Detección en las esquinas para escalar
+    if (uploadedImage) {
+        const corners = getImageCorners();
+        const keys = ['tl', 'tr', 'bl', 'br'];
+        for (let key of keys) {
+            const pt = corners[key];
+            const dist = Math.hypot(mouseX - pt.x, mouseY - pt.y);
+            if (dist <= handleRadius + 6) {
+                selectedItem = { type: 'image', action: 'scale', corner: key };
+                isInteracting = true;
+                startX = mouseX;
+                startY = mouseY;
+                initialScale = imgScale;
+                return;
+            }
+        }
+    }
+
+    // 2. Detección de selección de texto
     for (let i = canvasTexts.length - 1; i >= 0; i--) {
         const t = canvasTexts[i];
         if (Math.abs(mouseX - t.x) < 60 && Math.abs(mouseY - t.y) < 20) {
-            selectedItem = { type: 'text', index: i };
+            selectedItem = { type: 'text', action: 'move', index: i };
             isInteracting = true;
             startX = mouseX;
             startY = mouseY;
@@ -260,18 +317,48 @@ function handleMouseDown(e) {
         }
     }
 
-    selectedItem = { type: 'image' };
-    isInteracting = true;
-    startX = mouseX;
-    startY = mouseY;
-    initialScale = imgScale;
+    // 3. Detección sobre la imagen para moverla
+    if (uploadedImage) {
+        const corners = getImageCorners();
+        if (mouseX >= corners.tl.x && mouseX <= corners.tr.x && mouseY >= corners.tl.y && mouseY <= corners.bl.y) {
+            selectedItem = { type: 'image', action: 'move' };
+            isInteracting = true;
+            startX = mouseX;
+            startY = mouseY;
+            initialScale = imgScale;
+            return;
+        }
+    }
 }
 
 function handleMouseMove(e) {
-    if (!isInteracting) return;
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
+
+    // Cambiar dinámicamente el cursor según la posición del ratón
+    if (!isInteracting && uploadedImage) {
+        const corners = getImageCorners();
+        let hoverCorner = false;
+        if (corners) {
+            ['tl', 'tr', 'bl', 'br'].forEach(key => {
+                const pt = corners[key];
+                if (Math.hypot(mouseX - pt.x, mouseY - pt.y) <= handleRadius + 6) {
+                    canvas.style.cursor = (key === 'tl' || key === 'br') ? 'nwse-resize' : 'nesw-resize';
+                    hoverCorner = true;
+                }
+            });
+        }
+        if (!hoverCorner) {
+            if (mouseX >= corners.tl.x && mouseX <= corners.tr.x && mouseY >= corners.tl.y && mouseY <= corners.bl.y) {
+                canvas.style.cursor = 'move';
+            } else {
+                canvas.style.cursor = 'default';
+            }
+        }
+    }
+
+    if (!isInteracting) return;
     const dx = mouseX - startX;
     const dy = mouseY - startY;
 
@@ -279,16 +366,24 @@ function handleMouseMove(e) {
         if (selectedItem.type === 'text') {
             canvasTexts[selectedItem.index].x += dx;
             canvasTexts[selectedItem.index].y += dy;
+            startX = mouseX;
+            startY = mouseY;
         } else if (selectedItem.type === 'image') {
-            if (e.shiftKey) {
-                imgScale = Math.max(0.1, initialScale + (dx * 0.005));
-            } else {
+            if (selectedItem.action === 'move') {
                 imgX += dx;
                 imgY += dy;
+                startX = mouseX;
+                startY = mouseY;
+            } else if (selectedItem.action === 'scale') {
+                // Cálculo de distancia al centro de la imagen para escalado uniforme proporcional
+                const currentDist = Math.hypot(mouseX - imgX, mouseY - imgY);
+                const initialDist = Math.hypot(startX - imgX, startY - imgY);
+                if (initialDist > 0) {
+                    const factor = currentDist / initialDist;
+                    imgScale = Math.max(0.05, Math.min(5, initialScale * factor));
+                }
             }
         }
-        startX = mouseX;
-        startY = mouseY;
         redrawCanvas();
     }
 }
@@ -296,9 +391,9 @@ function handleMouseMove(e) {
 function handleMouseUp() {
     isInteracting = false;
     selectedItem = null;
+    if (canvas) canvas.style.cursor = 'default';
 }
 
-// MANEJO TÁCTIL (MÓVIL)
 function getPinchDistance(touches) {
     return Math.hypot(
         touches[0].clientX - touches[1].clientX,
@@ -310,7 +405,7 @@ function handleTouchStart(e) {
     e.preventDefault();
     if (e.touches.length === 1) {
         const touch = e.touches[0];
-        handleMouseDown({ clientX: touch.clientX, clientY: touch.clientY, shiftKey: false });
+        handleMouseDown({ clientX: touch.clientX, clientY: touch.clientY });
     } else if (e.touches.length === 2 && uploadedImage) {
         initialPinchDistance = getPinchDistance(e.touches);
         initialScale = imgScale;
@@ -321,7 +416,7 @@ function handleTouchMove(e) {
     e.preventDefault();
     if (e.touches.length === 1 && isInteracting) {
         const touch = e.touches[0];
-        handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY, shiftKey: false });
+        handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
     } else if (e.touches.length === 2 && initialPinchDistance && uploadedImage) {
         const currentDistance = getPinchDistance(e.touches);
         const factor = currentDistance / initialPinchDistance;
