@@ -11,19 +11,20 @@ let startX = 0, startY = 0;
 let initialScale = 1;
 let isInteracting = false;
 let initialPinchDistance = null;
-const handleRadius = 12; // Radio aumentado para facilitar el toque táctil en móviles
+const handleRadius = 14; // Tamaño visual del tirador
+const hitBoxRadius = 28;  // Zona de toque fácil para dedos en celulares
 
 function initCanvas() {
     canvas = document.getElementById('productCanvas');
     if (!canvas) return;
     ctx = canvas.getContext('2d');
     
-    // Eventos del mouse
+    // Eventos de Mouse (Computador)
     canvas.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
 
-    // Eventos táctiles para móviles
+    // Eventos Táctiles (Celulares / Tablets)
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
     canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
@@ -198,7 +199,7 @@ function generateLiveQR() {
     }, 100);
 }
 
-// Obtener las coordenadas de las 4 esquinas de la imagen ajustada
+// Obtener las coordenadas exactas de las 4 esquinas de la imagen
 function getImageCorners() {
     if (!uploadedImage) return null;
     const w = (uploadedImage.width * imgScale) / 2;
@@ -224,6 +225,7 @@ function redrawCanvas() {
     ctx.lineWidth = 2;
     ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
 
+    // Dibujar la imagen principal
     if (uploadedImage) {
         ctx.save();
         ctx.translate(imgX, imgY);
@@ -233,27 +235,35 @@ function redrawCanvas() {
         ctx.drawImage(uploadedImage, -uploadedImage.width / 2, -uploadedImage.height / 2);
         ctx.restore();
 
-        // Dibujar marco delimitador y tiradores circulares para el escalado en esquinas
+        // Marco estilo App de Diseño (Canva / Photoshop)
         const corners = getImageCorners();
         if (corners) {
             ctx.save();
             ctx.strokeStyle = '#D4AF37';
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
             ctx.strokeRect(corners.tl.x, corners.tl.y, corners.width, corners.height);
             ctx.setLineDash([]);
 
-            // Dibujar los 4 círculos en las esquinas
+            // Tiradores táctiles en las 4 esquinas
             const handleKeys = ['tl', 'tr', 'bl', 'br'];
             handleKeys.forEach(key => {
                 const pt = corners[key];
+                
+                // Círculo exterior dorado
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, handleRadius, 0, 2 * Math.PI);
                 ctx.fillStyle = '#D4AF37';
                 ctx.fill();
-                ctx.strokeStyle = '#000000';
+                ctx.strokeStyle = '#FFFFFF';
                 ctx.lineWidth = 2;
                 ctx.stroke();
+
+                // Punto centro interior
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = '#000000';
+                ctx.fill();
             });
             ctx.restore();
         }
@@ -282,19 +292,36 @@ function redrawCanvas() {
     });
 }
 
-function handleMouseDown(e) {
+// Obtener la posición (X,Y) del punto presionado (unificando Mouse y Touch)
+function getPointerPos(e) {
     const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    let clientX = e.clientX;
+    let clientY = e.clientY;
 
-    // 1. Detección en las esquinas para escalar
+    if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+    }
+
+    return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+    };
+}
+
+function handleMouseDown(e) {
+    const pos = getPointerPos(e);
+    const mouseX = pos.x;
+    const mouseY = pos.y;
+
+    // 1. Detectar si presionó alguna esquina para escalar
     if (uploadedImage) {
         const corners = getImageCorners();
         const keys = ['tl', 'tr', 'bl', 'br'];
         for (let key of keys) {
             const pt = corners[key];
             const dist = Math.hypot(mouseX - pt.x, mouseY - pt.y);
-            if (dist <= handleRadius + 6) {
+            if (dist <= hitBoxRadius) {
                 selectedItem = { type: 'image', action: 'scale', corner: key };
                 isInteracting = true;
                 startX = mouseX;
@@ -305,7 +332,7 @@ function handleMouseDown(e) {
         }
     }
 
-    // 2. Detección de selección de texto
+    // 2. Detectar si presionó un texto
     for (let i = canvasTexts.length - 1; i >= 0; i--) {
         const t = canvasTexts[i];
         if (Math.abs(mouseX - t.x) < 60 && Math.abs(mouseY - t.y) < 20) {
@@ -317,7 +344,7 @@ function handleMouseDown(e) {
         }
     }
 
-    // 3. Detección sobre la imagen para moverla
+    // 3. Detectar si presionó sobre la imagen para moverla
     if (uploadedImage) {
         const corners = getImageCorners();
         if (mouseX >= corners.tl.x && mouseX <= corners.tr.x && mouseY >= corners.tl.y && mouseY <= corners.bl.y) {
@@ -332,18 +359,17 @@ function handleMouseDown(e) {
 }
 
 function handleMouseMove(e) {
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const pos = getPointerPos(e);
+    const mouseX = pos.x;
+    const mouseY = pos.y;
 
-    // Cambiar dinámicamente el cursor según la posición del ratón
     if (!isInteracting && uploadedImage) {
         const corners = getImageCorners();
         let hoverCorner = false;
         if (corners) {
             ['tl', 'tr', 'bl', 'br'].forEach(key => {
                 const pt = corners[key];
-                if (Math.hypot(mouseX - pt.x, mouseY - pt.y) <= handleRadius + 6) {
+                if (Math.hypot(mouseX - pt.x, mouseY - pt.y) <= hitBoxRadius) {
                     canvas.style.cursor = (key === 'tl' || key === 'br') ? 'nwse-resize' : 'nesw-resize';
                     hoverCorner = true;
                 }
@@ -375,7 +401,6 @@ function handleMouseMove(e) {
                 startX = mouseX;
                 startY = mouseY;
             } else if (selectedItem.action === 'scale') {
-                // Cálculo de distancia al centro de la imagen para escalado uniforme proporcional
                 const currentDist = Math.hypot(mouseX - imgX, mouseY - imgY);
                 const initialDist = Math.hypot(startX - imgX, startY - imgY);
                 if (initialDist > 0) {
@@ -394,6 +419,7 @@ function handleMouseUp() {
     if (canvas) canvas.style.cursor = 'default';
 }
 
+// MANEJO DE EVENTOS TÁCTILES MÓVILES
 function getPinchDistance(touches) {
     return Math.hypot(
         touches[0].clientX - touches[1].clientX,
@@ -402,10 +428,9 @@ function getPinchDistance(touches) {
 }
 
 function handleTouchStart(e) {
-    e.preventDefault();
+    if (e.cancelable) e.preventDefault();
     if (e.touches.length === 1) {
-        const touch = e.touches[0];
-        handleMouseDown({ clientX: touch.clientX, clientY: touch.clientY });
+        handleMouseDown(e);
     } else if (e.touches.length === 2 && uploadedImage) {
         initialPinchDistance = getPinchDistance(e.touches);
         initialScale = imgScale;
@@ -413,10 +438,9 @@ function handleTouchStart(e) {
 }
 
 function handleTouchMove(e) {
-    e.preventDefault();
+    if (e.cancelable) e.preventDefault();
     if (e.touches.length === 1 && isInteracting) {
-        const touch = e.touches[0];
-        handleMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
+        handleMouseMove(e);
     } else if (e.touches.length === 2 && initialPinchDistance && uploadedImage) {
         const currentDistance = getPinchDistance(e.touches);
         const factor = currentDistance / initialPinchDistance;
@@ -426,7 +450,6 @@ function handleTouchMove(e) {
 }
 
 function handleTouchEnd(e) {
-    e.preventDefault();
     if (e.touches.length < 2) {
         initialPinchDistance = null;
     }
